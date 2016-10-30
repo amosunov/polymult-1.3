@@ -1,0 +1,599 @@
+% (C) 2016, Anton Mosunov
+
+%   POLYMULT is free software; you can redistribute it and/or modify
+%   it under the terms of the GNU General Public License as published by
+%   the Free Software Foundation; either version 2 of the License, or
+%   (at your option) any later version.
+
+%   POLYMULT is distributed in the hope that it will be useful,
+%   but WITHOUT ANY WARRANTY; without even the implied warranty of
+%   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+%   GNU General Public License for more details.
+
+%   You should have received a copy of the GNU General Public License
+%   along with POLYMULT; if not, write to the Free Software
+%   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+
+\documentclass[a4paper,10pt]{article}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{eucal}
+\usepackage{amscd}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{wrapfig}
+\usepackage{enumitem}
+\urlstyle{sf}
+
+\addtolength{\oddsidemargin}{-0.75in}
+\addtolength{\evensidemargin}{-0.75in}
+\addtolength{\textwidth}{1.5in}
+
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\HH}{\mathcal{H}}
+\newcommand{\Q}{\mathbb{Q}}
+\newcommand{\I}{\mathbb{I}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Pee}{\mathbb{P}}
+\newcommand{\EuO}{\mathcal{O}}
+\newcommand{\Qbar}{\overline{\mathbb{Q}}}
+\newcommand{\fn}{\hfill[Function]}
+\newcommand{\macro}{\hfill[Macro]}
+\newcommand{\gmp}{\hfill[GMP]}
+\newcommand{\code}{\lstinline}
+
+\newcommand{\ljk}[2]{\left(\frac{#1}{#2}\right)}
+\newcommand{\modulo}[1]{\;\left(\mbox{mod}\;#1\right)}
+\newcommand{\fr}{\mathfrak}
+
+\def\notdivides{\mathrel{\kern-3pt\not\!\kern4.5pt\bigm|}}
+\def\nmid{\notdivides}
+\def\nsubseteq{\mathrel{\kern-3pt\not\!\kern2.5pt\subseteq}}
+
+\parindent=0pt
+\parskip 4pt plus 2pt minus 2pt
+
+%\email{amosunov@uwaterloo.ca}
+
+\title{POLYMULT 1.3\\Fast Polynomial Multiplication}
+\author{Anton S. Mosunov}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\lstset{language=c}
+\lstset{basicstyle=\ttfamily}
+\lstset{keywordstyle=}
+%\lstset{morekeywords={mpz_t,mpz_poly_t,fmpz_poly_t}}
+\lstset{escapeinside=\%\%}
+
+
+
+
+
+\section{Introduction}
+
+The POLYMULT library provides subroutines for the out-of-core Fast-Fourier-Transform (FFT) based polynomial multiplication using \code{OpenMP} for parallelization. The ``out-of-core'' here means that the resulting files and the intermediate computations get stored into the hard disk. The library is designed for multicore and multiprocessor environments, but can be used on regular computers as well.
+
+The library is designed specifically for very large polynomials with non-negative integer coefficients, possibly exceeding $2^{37}$ in their degree. Further in this manual, we use the words ``series'' and ``polynomial'' interchangeably, as all the polynomials that are available in POLYMULT get initialized from specific infinite series.
+
+The library also allows to invert and divide large polynomials to a certain degree. The inversion algorithm works correctly only with polynomials whose degree is of the form $2^n-1$, $n \in \mathbb N$, and constant coefficient is 1. It is based on the Newton's algorithm, which computes the inverse of a non-zero polynomial $f(x)$ with $\deg f = 2^n - 1$ iteratively to degrees $3, 7, \ldots, 2^{n-1} - 1, 2^n - 1$ \cite[Algorithm 9.3]{gathen}. Since the coefficients of an inverse polynomial might grow very fast, the inversion of each polynomial is performed modulo some pre-determined prime.
+
+The division of a polynomial $f(x)$ by a non-zero polynomial $g(x)$ is performed by computing $g^{-1}(x)$ first, and then multiplying $f(x)$ by $g^{-1}(x)$.
+
+The out-of-core FFT-based polynomial multiplication technique is due to Hart, Tornar\'ia and Watkins \cite{hart}. The detailed description of this technique can also be found in \cite[Section 4]{mosunov}. In simple terms, the problem of multiplication of two large polynomials gets reduced to several multiplications of smaller polynomials over finite fields. The multiplication of smaller polynomials (in our experiments, of degree less than $2^{25}$) is performed using the subroutines implemented in the \code{FLINT} library.
+
+POLYMULT is maintained by Anton S. Mosunov, University of Waterloo, and is an appendix to the Master's thesis \cite{mosunov}, written under the supervision of Michael J. Jacobson, Jr. It is highly recommended to read the thesis (Section 4 in particular) before utilizing the library, as certain notions, such as the bundling parameter or the bit size parameter, are not defined in this manual.
+
+The manual for POLYMULT is based on the \LaTeX \, template for the manual of FLINT 1.0:\\\url{http://web.mit.edu/sage/export/tmp/flint-1.1/doc/flint-roadmap.tex}. The souce . The contents of source files as well as header files are organized FLINT 2.5.2.
+
+
+
+
+
+\section{Changes since the previous version}
+
+October 29th, 2016. Since the version 1.2, the following changes had been made:
+
+\begin{itemize}
+\item The \code{configure} file is now a part of POLYMULT. In contrast, the previous version contained only the Makefile and required the user to edit it manually;
+
+\item All the files are now supplied with headers, providing information on the GNU General Public License.
+\end{itemize}
+
+
+
+
+
+\section{Dependencies in POLYMULT} \label{sec:dependencies}
+
+POLYMULT depends on several libraries and specifications that need to be present on your system prior to the installation. These libraries are:
+
+\begin{enumerate}
+\item \code{FLINT}, \url{flintlib.org}. Fast library for number theory;
+\item \code{GMP}, \url{gmplib.org}. The GNU multiple precision arithmetic library;
+\item \code{OpenMP}, \url{openmp.org}. The OpenMP API specification for parallel programming. Since version 4.2, every GCC compiler contains the implementation of the OpenMP specification.
+\end{enumerate}
+
+Before installing POLYMULT, make sure that each of those libraries is installed.
+
+
+
+
+
+\section{Building and using POLYMULT}
+
+The easiest way to use POLYMULT is to build each module separately using \code{make}. The \code{make} command creates an executable, while the \code{make lib} command creates a static library.
+
+
+
+
+\section{Reporting issues}
+
+The maintainers wish to be made aware of any bugs in the library or typos in this manual. Please send an email with your bug report to \code{amosunov@uwaterloo.ca}.
+
+If possible please include details of your system, version of gcc, version of GMP and precise details of how to replicate the bug.
+
+Note that POLYMULT needs to be linked against version 4.2.1 or later of GMP and must be compiled with gcc version 4.2 or later.
+
+
+
+
+
+\section{Files}
+
+The POLYMULT library consists of two parts:
+
+\begin{enumerate}
+\item The subroutines implemented in \code{init.c} allow to initialize specific polynomials. See Subsection \ref{sec:macros} for the series currently available, and Subsection \ref{sec:init} for the generic description of the contents of this file;
+
+\item The \code{mult.c} file contains the implementation of the out-of-core FFT-based multiplication technique of Hart, Tornar\'ia and Watkins, with OpenMP used for parallelization. It also contains the \code{invert} routine for the out-of-core polynomial inversion, based on the Newton's algorithm. See Subsection \ref{sec:out-of-core} for more details;
+
+\item The \code{main.c} contains the implementation of the command line program \code{polymult}, through which the multiplication is performed. See Subsection \ref{sec:polymult_exe} for the instructions on how to run the program.
+\end{enumerate}
+
+
+
+
+
+\section{Macros and supported series} \label{sec:macros}
+
+The POLYMULT library contains several macro definitions. The most important macros are the names of various series which POLYMULT can initialize. They are defined in \code{init.h} along with the declaration of the initialization routines. As of version 1.1, the supported series and their macros are:
+\setlist[enumerate,1]{start=0}
+\begin{enumerate}
+\item \code{THETA3} --- corresponds to the 3rd Jacobi theta series:
+%
+$$
+\theta_3(q) = 1 + 2\sum\limits_{n=1}^\infty q^{n^2} = 1 + 2q + 2q^4 + 2q^9 + \ldots
+$$
+%
+This series is used for the tabulation of all class numbers $h(\Delta)$ of imaginary quadratic fields with discriminant $\Delta \not \equiv 1$ (mod 8); it is also used for the tabulation of class numbers with $\Delta \equiv 8, 12$ (mod 16).
+
+\item \code{THETA3_SQUARED} --- corresponds to $\left[\theta_3(q)\right]^2$, which captures the number of representations of each number as a sum of 2 perfect squares:
+%
+$$
+\left[\theta_3(q)\right]^2 = \sum\limits_{x, y \in \mathbb Z}q^{x^2+y^2} = 1 + 4q + 4q^2 + 4q^4 + 8q^5 + 8q^8 + 4q^9 + 8q^{10} + \ldots
+$$
+
+\item \code{NABLA} --- corresponds to $\nabla(q)$, the series indicating every triangular number:
+%
+$$
+\nabla(q) = \sum\limits_{n = 0}^\infty q^{\frac{n(n+1)}{2}} = 1 + q + q^3 + q^6 + q^{10} + \ldots 
+$$
+%
+This series is used for the tabulation of all class numbers $h(\Delta)$ of imaginary quadratic fields with discriminant $\Delta \equiv 5$ (mod 8).
+
+\item \code{NABLA_SQUARED} --- corresponds to $\left[\nabla(q)\right]^2$, which captures the number of representations of each number as a sum of 2 triangular numbers:
+%
+$$
+\left[\nabla(q)\right]^2 = 1 + 2q + q^2 + 2q^3 + 2q^4 + 3q^6 + 2q^7 + 2q^9 + 2q^{10} + \ldots
+$$
+
+\item \code{DOUBLE_NABLA} --- corresponds to $\nabla(q^2)$:
+%
+$$
+\nabla(q^2) = 1 + q^2 + q^6 + \ldots
+$$
+%
+This series is used for the tabulation of all class numbers $h(\Delta)$ of imaginary quadratic fields with discriminant $\Delta \equiv 8, 12$ (mod 16).
+
+\item \code{DOUBLE_NABLA_SQUARED} --- corresponds to $\left[\nabla(q^2)\right]^2$:
+%
+$$
+\left[\nabla(q^2)\right]^2 = 1 + 2q^2 + q^4 + 2q^6 + 2q^8 + \ldots
+$$
+
+\item \code{THETA234} --- corresponds to the product $\theta_2(q) \cdot \theta_3(q) \cdot \theta_4(q)$, where $\theta_2$ and $\theta_4$ denote the 2nd and the 4th Jacobi theta series, respectively:
+%
+$$
+\theta_2(q)\theta_3(q)\theta_4(q) = \sum\limits_{n = 0}^\infty(-1)^n(2n+1)q^{\frac{n(n+1)}{2}} = 1 - 3q + 5q^3 - 7q^6 + 9q^{10} - \ldots
+$$
+%
+This series is used for the tabulation of all class numbers $h(\Delta)$ of imaginary quadratic fields with discriminant $\Delta \equiv 1$ (mod 8). In order to perform the tabulation, this series has to be inverted modulo some fixed prime $p$ first. See the Humbert's formula in \cite[Section 7.1]{mosunov};
+
+\item \code{ALPHA} --- corresponds to the alpha series $\alpha(q)$, defined as follows:
+%
+$$
+\alpha(q) = \sum\limits_{n = 1}^\infty(-1)^{n+1}n^2\frac{q^{\frac{n(n+1)}{2}} - 1}{1 + q^n}.
+$$
+%
+This series is used for the tabulation of all class numbers $h(\Delta)$ of imaginary quadratic fields with discriminant $\Delta \equiv 1$ (mod 8). It is computed modulo some fixed prime $p$.
+\end{enumerate}
+
+Another important macro is \code{MINPOW}, which is a positive integer. It is defined in \code{mult.c}, and represents the smallest power up to which the \code{FLINT} multiplication/inversion routines are used instead of the out-of-core FFT-based approach. For example, the default value of \code{MINPOW} is $25$, which means that each product of polynomials not exceeding $2^{25}$ in their degrees will get computed using \code{FLINT}. In Newton's iterative algorithm for the polynomial inversion, the inversion up to $2^{\texttt{MINPOW}} - 1$ is performed using \code{FLINT}, while inversions up to $2^{\texttt{MINPOW} + 1} - 1,  2^{\texttt{MINPOW} + 2} - 1, \ldots$ get computed out-of-core. The value of \code{MINPOW} solely depends on the amount of RAM available on your computer. The larger \code{MINPOW}, the better. To estimate the largest value for your machine, try running \code{nmod_poly_inv} or \code{nmod_poly_mul} routines of \code{FLINT} on polynomials of degrees $2^{20}, 2^{21}, \ldots, 2^k$, where $k$ is the power when one of those two routines crush. Set \code{MINPOW} $= k - 1$.
+
+During the compilation, the following two macros may be defined through the \code{-D} command:
+
+\begin{itemize}
+\item \code{KEEP_FILES}. In order to save some space on the hard disk, the out-of-core polynomial multiplication routines delete intermediate files automatically. In order to keep any intermediate computations saved to hard disk, please define the \code{KEEP_FILES} macro. This may be useful for debugging purposes, or when the crushes on a server occur and you don't want your computations to get corrupted or lost. In this case, make sure that the prefixes of various collections of files differ from each other so that they won't get overwritten;
+
+\item \code{DEBUG}. Many subroutines of POLYMULT have several sub steps. Such sub steps are: initializing from or saving to files, bundling polynomials or reducing polynomials modulo a prime, restoring the coefficients using the Chinese Remainder Theorem, etc. By default, the timing and the status of those sub steps do not get printed to the standard output. If you would like to see this information, for example in order to observe at which point of the execution your program crushes, please specify the \code{DEBUG} macro.
+\end{itemize}
+
+
+
+
+
+\section{Setup}
+
+In order to prepare the POLYMULT library for compilation, please edit the \code{Makefile}. In particular, specify your compiler which supports \code{OpenMP} in \code{CC}, and your compilation macros (see Subsection \ref{sec:macros}) in \code{SYMBS}, with each macro preceded by \code{-D}. In \code{INCS}, it is especially important to specify the path to \code{omp.h} file (on Macintosh its location is not obvious). If needed, change the standard paths to header files and library files in \code{INCS} and \code{LIBS}, respectively. It is not recommended to edit the parameters specified in \code{CFLAGS}.
+
+The \code{Makefile} defines the following three commands:
+
+\begin{itemize}
+
+\item The \code{make} command builds an executable \code{polymult} which allows to multiply two polynomials. See Subsection \ref{sec:polymult_exe} on how to use it;
+
+\item The \code{make lib} command builds a static library \code{libpolymult.a}, which incorporates two object files \code{init.o} and \code{mult.o}, produced from \code{init.c} and \code{mult.c}, respectively. See Subsection \ref{sec:polymult_lib} on how to link this library to your program;
+
+\item The \code{make clean} command removes all the files which have the extension \code{.o}. Use this command right after running \code{make lib} to remove all the object files.
+
+\end{itemize}
+
+
+
+
+
+\section{File types}
+
+The out-of-core routines produce many binary files on your hard disk. They may contain coefficients of a single polynomial either over the ring of integers, or reduced modulo several primes. The files are saved in the form \code{prefix0}, \code{prefix1}, \ldots, \code{prefixM}, where \code{prefix} is the name of a particular collection of files and \code{M} is the last index. Note that in order for the program to work correctly, the total number of files $\texttt{M} + 1$ must evenly divide the total number of coefficients stored in those files.
+
+Let $n \in \mathbb N$, and consider a polynomial $f(x) = a_0 + a_1x + a_2x^2 + \ldots + a_{n-1}x^{n-1}$ with $a_0, a_1, \ldots, a_{n-1} \in \mathbb N \cup \{0\}$. Let $p_1, p_2, \ldots, p_k$ be $k$ distinct primes, and let $m$ be a total number of files which evenly divides $n$. There are three types of collections of files that get produced:
+
+\begin{itemize}
+\item \textbf{Type 1}. These collections of files contain coefficients of $f(x)$ that are evenly distributed between each of $m$ files:
+
+\begin{tabular}{l l l l l}
+\texttt{prefix0}:  & $a_0$, & $a_1$, & \ldots & $a_{n/m - 1}$\\
+\texttt{prefix1}: & $a_{n/m}$, & $a_{n/m + 1}$, & \ldots & $a_{2n/m - 1}$\\
+\ldots \\
+\texttt{prefix}$m-1$: & $a_{(m-1)n/m}$, & $a_{(m-1)n/m + 1}$, & \ldots & $a_{n - 1}$
+\end{tabular}
+
+After the out-of-core multiplication and the restoration of coefficients, these collections of files contain the final result of the multiplication. It is also possible to convert the \textbf{Type 1} files into \textbf{Type 2} files in order to prepare the resulting polynomial for yet another out-of-core multiplication.
+
+\item \textbf{Type 2}. These collections of files contain coefficients of $F(x) = A_0 + A_1x + \ldots +A_{n/B - 1}x^{n/B - 1}$, the \emph{bundled} polynomial produced from $f(x)$ with some bundling parameter $B$ which evenly divides $n/m$, and reduced modulo primes $p_1, p_2, \ldots, p_k$:
+
+\begin{tabular}{l l l l l}
+\texttt{prefix0}: & \textnormal{$A_0$ (mod $p_1$)}, &  \textnormal{$A_1$ (mod $p_1$)}, & \ldots & \textnormal{$A_{n/(mB) - 1}$ (mod $p_1$)},\\
+& \textnormal{$A_0$ (mod $p_2$)}, &  \textnormal{$A_1$ (mod $p_2$)}, & \ldots & \textnormal{$A_{n/(mB) - 1}$ (mod $p_2$)},\\
+& & & \ldots\\
+& \textnormal{$A_0$ (mod $p_k$)}, &  \textnormal{$A_1$ (mod $p_k$)}, & \ldots & \textnormal{$A_{n/(mB) - 1}$ (mod $p_k$)}\\
+\texttt{prefix1}: & \textnormal{$A_{n/(mB)}$ (mod $p_1$)}, &  \textnormal{$A_{n/(mB)+1}$ (mod $p_1$)}, & \ldots & \textnormal{$A_{2n/(mB) - 1}$ (mod $p_1$)},\\
+& \textnormal{$A_{n/(mB)}$ (mod $p_2$)}, &  \textnormal{$A_{n/(mB)+1}$ (mod $p_2$)}, & \ldots & \textnormal{$A_{2n/(mB) - 1}$ (mod $p_2$)},\\
+& & & \ldots\\
+& \textnormal{$A_{n/(mB)}$ (mod $p_k$)}, &  \textnormal{$A_{n/(mB)+1}$ (mod $p_k$)}, & \ldots & \textnormal{$A_{2n/(mB) - 1}$ (mod $p_k$)}\\
+\ldots\\
+\texttt{prefix}$m-1$: & \textnormal{$A_{(m-1)n/(mB)}$ (mod $p_1$)}, &  \textnormal{$A_{(m-1)n/(mB)+1}$ (mod $p_1$)}, & \ldots & \textnormal{$A_{n/B - 1}$ (mod $p_1$)},\\
+& \textnormal{$A_{(m-1)n/(mB)}$ (mod $p_1$)}, &  \textnormal{$A_{(m-1)n/(mB)+1}$ (mod $p_2$)}, & \ldots & \textnormal{$A_{n/B - 1}$ (mod $p_2$)},\\
+& & & \ldots\\
+& \textnormal{$A_{(m-1)n/(mB)}$ (mod $p_k$)}, &  \textnormal{$A_{(m-1)n/(mB)+1}$ (mod $p_k$)}, & \ldots & \textnormal{$A_{n/B - 1}$ (mod $p_k$)}
+\end{tabular}
+
+Before an out-of-core multiplication is performed, both polynomials get converted into collections of this type.
+
+\item \textbf{Type 3}. These collections of files contain coefficients of a polynomial that is a result of the out-of-core multiplication of two bundled polynomials modulo $p_1, p_2, \ldots, p_k$. Though their structure is essentially the same as collections of \textbf{Type 2}, they do \emph{not} contain coefficients of a bundled polynomial. Nevertheless, it is possible to restore the coefficients of a resulting polynomial distributed over files of \textbf{Type 1} from files of \textbf{Type 3}. This is done via the restoration algorithm described in Subsection \ref{sec:out-of-core}.
+\end{itemize}
+
+
+
+
+
+\section{Initialization} \label{sec:init}
+
+All initialization subroutines are defined in \code{init.c}. There are three kinds of initialization functions:
+
+\begin{itemize}
+\item The subroutines of the form
+%
+\begin{lstlisting}
+void init_block_name(int * block, const ulong size, const ulong min)
+void init_block_name(int * block, const ulong size, const ulong min,
+		     const int mod)
+\end{lstlisting}
+%
+initialize a block of coefficients of a series called \code{name}, starting from a coefficient \code{min} and up to a coefficient \code{min + size}. The presence of a \code{mod} parameter indicates that the coefficients get initialized modulo a prime \code{mod}. This kind of subroutines correspond to those series which admit negative coefficients or the coefficients that do not fit into the \code{int} type. The names of the series currently supported by POLYMULT can be found in Subsection \ref{sec:macros}, and must be written \emph{in lower case}, in contrast to an upper case in which their macros are defined.
+
+\item The subroutines of the form
+%
+\begin{lstlisting}
+void nmod_poly_name(nmod_poly_t poly, const ulong size)
+\end{lstlisting}
+%
+initialize first \code{size} coefficients of a polynomial called \code{name} of type \code{nmod_poly_t} (defined in \code{FLINT}). They initialize a polynomial \emph{as a whole}, rather than just a block of its coefficients. These subroutines utilized solely for the polynomial inversion algorithm.
+
+\item The subroutine
+%
+\begin{lstlisting}
+void nmod_poly_to_files(const nmod_poly_t poly, const ulong size,
+		        const uint files, const char * resultname)
+\end{lstlisting}
+%
+copies the coefficients of a polynomial \code{poly} with $\texttt{size}$ coefficients into a \textbf{Type 1} collection of \code{files} binary files with a prefix \code{resultname}. Note that \code{size} must be evenly divisible by \code{files} in order for this subroutine to work correctly.
+\end{itemize}
+
+
+
+
+
+\section{Out-of-core operations on polynomials} \label{sec:out-of-core}
+
+The following subroutines are defined in \code{mult.c}:
+
+\begin{lstlisting}
+void init_primes(ulong * primes, const uint total_primes,
+		 const ulong lowerbound)
+\end{lstlisting}
+
+Initializes a set of \code{total_primes} distinct primes, which immediately follow the \code{lowerbound}. This subroutine utilizes the \code{n_nextprime} function of \code{FLINT}, and is used in \code{multiply} and \code{divide} subroutines described below.
+
+\begin{lstlisting}
+void init_files(const ulong * primes, const uint total_primes,
+		const ulong limit, const uint files, const uint bundle,
+		const uint bitsize, const int mod, const char * resultname,
+		const void * type, const char flags)
+\end{lstlisting}
+
+This subroutine ``prepares'' a polynomial for the out-of-core multiplication by initializing a \textbf{Type 2} collection of \code{files} binary files with a prefix \code{resultname}. The files contain coefficients of a \emph{bundled} polynomial, produced from the first \code{limit} coefficients of a series called \code{type}, and reduced modulo \code{total_primes} primes specified in \code{primes}. If the coefficients of a series admit negative numbers and hence need to be initialized modulo a prime, this prime can be specified by a \code{mod} parameter (set $\texttt{mod} = 0$ otherwise).
+
+Note that the \code{type} parameter, instead of being a macro identifying a specific series, may be a prefix of a \textbf{Type 1} collection of \code{files} binary files (that is, a string of type \code{char *}). These files get deleted after the initialization of a polynomial, unless the \code{flags} parameter is set to \code{NO_REMOVE} macro. This macro allows to preserve the files with a prefix \code{type} \emph{even if} the \code{KEEP_FILES} macro is undefined. The \code{NO_REMOVE} macro is utilized solely by the \code{invert} routine described below, and is not recommended for utilization.
+
+The bundling parameter is \code{bundle}, and the bitsize parameter is \code{bitsize} (see \cite[Section 4.1]{mosunov}).
+
+\begin{lstlisting}
+void ooc_multiply(const ulong * primes, const uint total_primes,
+	          const ulong limit, const uint files, const uint bundle,
+	          const char * resultname, const char * name1, const char * name2)
+\end{lstlisting}
+
+Performs an out-of-core multiplication of two \emph{bundled} polynomials reduced modulo \code{total_primes} primes, specified in \code{primes}. Both polynomials are specified via \textbf{Type 2} collection of \code{files} binary files, and their prefixes are \code{name1} and \code{name2}. The result is saved into \textbf{Type 3} collection of \code{files} binary files with a prefix \code{resultname}. Both (non-bundled) polynomials have a degree $\texttt{limit} - 1$, and the \code{limit} parameter has to be evenly divisible by \code{files}. The bundling parameter is \code{bundle}. The resulting polynomial contains the information only on the first \code{limit} coefficients.
+
+\begin{lstlisting}
+void square(const ulong * primes, const uint total_primes,
+	    const ulong limit, const uint files, const uint bundle,
+	    const char * resultname, const char * name1)
+\end{lstlisting}
+
+Performs an out-of-core squaring of a \emph{bundled} polynomial reduced modulo \code{total_primes} primes, specified in \code{primes}. A polynomial with $\texttt{limit}$ coefficients is specified via a \textbf{Type 2} collection of \code{files} binary files, and its prefix is \code{name1}. The \code{limit} parameter has to be evenly divisible by \code{files}. The result is saved into a \textbf{Type 3} collection of $\texttt{files}$ binary files with a prefix \code{resultname}. The bundling parameter is \code{bundle}. Note that the squaring gets performed \emph{completely}; that is, no truncation occurs, and the resulting files actually contain information on $2\texttt{limit}-1$ coefficients.
+
+\begin{lstlisting}
+void restore_coeff(const ulong * primes, const uint total_primes,
+		   const ulong limit, const uint files, const uint bundle,
+		   const uint bitsize, const int mod, const char * resultname,
+		   const char * name1, const int flags)
+\end{lstlisting}
+
+Restores \code{limit} coefficients from a \textbf{Type 3} collection of \code{files} binary files with a prefix \code{name1}, which contain the result of multiplication of two bundled polynomials reduced modulo \code{total_primes} primes, specified in \code{primes}. The result is saved into a \textbf{Type 1} collection of \code{files} binary files with a prefix \code{resultname}. The \code{limit} parameter has to be evenly divisible by \code{files}. The bundling parameter is \code{bundle} and the bitsize parameter is \code{bitsize}. If the restored coefficients need to be reduced modulo a prime, this prime can be specified in \code{mod} (set $\texttt{mod} = 0$ otherwise). The \code{flags} parameter admits two flags, namely \code{WITH_INVERSE} and \code{WITH_SQUARING}. Both of those flags are used by the \code{invert} routine to speedup the inversion, and not recommended for utilization.
+
+\begin{lstlisting}
+void invert(const ulong * primes, const uint maxpow,
+	    const uint files, const uint bundle, const int mod,
+	    const char * resultname, const char * folder, const char type)
+\end{lstlisting}
+
+Inverts the polynomial of type \code{type} to degree $2^{\texttt{maxpow}}$ via Newton's algorithm using out-of-core subroutines described above. The result is saved into \textbf{Type 1} collection of \texttt{files} binary files with a prefix \code{resultname} in a folder \code{folder}. Note that \code{files} must evenly divide $2^{\texttt{maxpow}}$. If the inversion need to be performed modulo a prime, this prime can be specified in \code{mod} (set $\texttt{mod} = 0$ otherwise). The bundling parameter is \texttt{bundle}. The primes used for the out-of-core multiplication are specified in \code{primes}. Make sure that enough primes get provided, as the total number of primes used for the computation gets recomputed on every iteration.
+
+\begin{lstlisting}
+void multiply(const ulong limit, const uint files, const uint bundle,
+	      const uint bound, const char * resultname, const char * folder,
+	      const char type1, const char type2)
+\end{lstlisting}
+
+Performs the out-of-core multiplication of two polynomials of types \code{type1} and \code{type2}. The result is saved into \textbf{Type 1} collection of \texttt{files} binary files with a prefix \code{resultname} in a folder \code{folder}. The number of coefficients of both polynomials is \code{limit}, and the upper bound on the coefficients of the resulting polynomial is \code{bound}. The bundling parameter is \code{bundle}.
+
+\begin{lstlisting}
+void divide(const ulong limit, const uint files, const uint bundle,
+	    const uint bound, const char * resultname, const char * folder,
+	    const char type1, const char type2)
+\end{lstlisting}
+
+Performs the inversion of a polynomial of type \code{type2}, followed by an out-of-core multiplication by a polynomial of type \code{type1}. The result is saved into \textbf{Type 1} collection of \texttt{files} binary files with a prefix \code{resultname} in a folder \code{folder}. The number of coefficients of both polynomials is \code{limit}, and the upper bound on the coefficients of the resulting polynomial is \code{bound}. The bundling parameter is \code{bundle}.
+
+
+
+
+\section{Defining your own polynomials}
+
+If you would like to multiply polynomials that are not present in POLYMULT, feel free to define them by following the process described below. We let \code{K} be the total number of series defined (so the last series has index $\texttt{K}-1$).
+
+\setlist[enumerate,1]{start=1}
+\begin{enumerate}
+\item Let \code{name} be the name of your series. In the first part of \code{init.h}, define the macro \code{NAME} as follows:
+
+\begin{lstlisting}
+#define NAME K
+\end{lstlisting}
+
+\item In the first part of \code{init.h}, change the definition of the macro \code{IS_FILE} as follows:
+
+\begin{lstlisting}
+#define IS_FILE(X) (((ulong) X) > NAME)
+\end{lstlisting}
+
+\item In the first part of \code{init.h}, right after the declaration of your macro, define the subroutine \code{init_block_name} either in the form
+
+\begin{lstlisting}
+void init_block_name(int * block, const ulong size, const ulong min)
+\end{lstlisting}
+
+or in the form
+
+\begin{lstlisting}
+void init_block_name(int * block, const ulong size, const ulong min,
+		     const int mod)
+\end{lstlisting}
+
+The latter case is utilized when your series admits negative values or coefficients that exceed the \code{int} type in bit size. In order for the program to work correctly, such a series needs to be considered modulo some fixed prime \code{mod}.
+
+\item (Optional) If the first coefficient of your polynomial is one and you intend to invert it, in the second part of \code{init.h} define the subroutine
+
+\begin{lstlisting}
+nmod_poly_name(nmod_poly_t poly, const ulong size)
+\end{lstlisting}
+
+\item Implement the subroutines \code{init_block_name} (and possibly \code{nmod_poly_name}) in \code{init.c};
+
+\item In the file \code{mult.c}, include your polynomial macro in the list occurring in \code{init_files} in one of the following two ways, depending on whether the \code{mod} parameter is required by the \code{init_block_name} routine:
+
+\begin{lstlisting}
+else if (type == (void *) NAME)		else if (type == (void *) NAME)
+{					{
+init_block_name(INIT_PARAMS);		init_block_name(INIT_PARAMS, mod);
+}					}
+\end{lstlisting}
+
+\item (Optional) If the polynomial admits the inversion, include your polynomial macro in the list occurring in \code{invert}:
+
+\begin{lstlisting}
+else if (type == NAME)
+{
+	nmod_poly_name(poly, limit);
+}
+\end{lstlisting}
+
+\item In \code{main.c}, add the description of your polynomial in the list of \code{printf} statements:
+
+\begin{lstlisting}
+printf(K: name\n);
+\end{lstlisting}
+
+\item Update the information in the documentation.
+\end{enumerate}
+
+Alternatively, please send a request to \code{amosunov@uwaterloo.ca} to implement the series you have in mind, and it will appear in the next release. Make sure to include the description of your series (the most preferred description is the actual implementation), and before that verify that its block of coefficients can be initialized in a reasonable time.
+
+\section{Utilizing the executable} \label{sec:polymult_exe}
+
+The \code{polymult} executable admits 9 parameters. If the total number of parameters differs from 9, the following helping prompt comes out:
+
+\begin{lstlisting}
+Format: ./polymult [multiply/divide] [poly1] [poly2] [limit] [files] [bundle]
+		   [bound] [resultname] [folder]
+Types of poly1/poly2:
+0: theta3		= 1 + 2q + 2q^4 + 2q^9 + ...
+1: theta3 squared
+2: nabla		= 1 + q + q^3 + q^6 + q^10 + ...
+3: nabla squared
+4: double nabla		= 1 + q^2 + q^6 + q^12 + ...
+5: double nabla squared
+6: theta2*theta3*theta4	= 1 - 3q + 5q^3 - 7q^6 + 9q^10 - ...
+7: alpha series
+\end{lstlisting}
+
+The parameters provided are:
+
+\begin{itemize}
+\item \code{[multiply/divide]}: write either \code{multiply} or \code{divide} as your first parameter to specify which action would you like to perform;
+
+\item \code{[poly1]}: type of the first polynomial (an integer from 0 to 7, see the prompt above);
+
+\item \code{[poly2]}: type of the second polynomial (an integer from 0 to 7, see the prompt above);
+
+\item \code{[limit]}: degree to which polynomials get multiplied or divided;
+
+\item \code{[files]}: number of files in a single collection to which the coefficients of a resulting polynomial, as well as intermediate computations, will be saved;
+
+\item \code{[bundle]}: bundling parameter;
+
+\item \code{[bound]}: upper bound on the coefficients of a resulting polynomial;
+
+\item \code{[resultname]}: prefix of files where the result get saved;
+
+\item \code{[folder]}: folder.
+\end{itemize}
+
+See Subsection \ref{sec:polymult_examples} for some examples on how to run the program.
+
+\section{Examples} \label{sec:polymult_examples}
+
+\textbf{Example 1}. The following command tabulates all Hurwitz class numbers $H(\Delta)$ of imaginary quadratic fields to $|\Delta| < 2^{40}$, where $|\Delta| \equiv 8$ (mod 16). In particular, it multiplies $\theta_3(q)$ by $\nabla^2(q^2)$ to degree $2^{36}=68719476736$ out-of-core, with the bundling parameter $2^{11}=2048$ and the upper bound on the coefficients of $\theta_3(q)\nabla^2(q^2)$ given by $2316050$. The coefficients of $\theta_3(q)\nabla^2(q^2)$ get saved into $2^{12}=4096$ files: \code{/home/h8mod16.0}, \code{/home/h8mod16.1}, \ldots, \code{/home/h8mod16.4095}.
+
+\begin{lstlisting}
+./polymult multiply 0 5 68719476736 4096 2048 2316050 h8mod16. /home
+\end{lstlisting}
+
+\textbf{Example 2}. The following command tabulates all Hurwitz class numbers $H(\Delta)$ (multiplied by 2) of imaginary quadratic fields to $|\Delta| < 2^{40}$, where $|\Delta| \equiv 4$ (mod 16). In particular, it multiplies $\theta_3^2(q)$ by $\nabla(q^2)$ to degree $2^{36}=68719476736$ out-of-core, with the bundling parameter $2^{11}=2048$ and the upper bound on the coefficients of $\theta_3^2(q)\nabla(q^2)$ given by $10189617$. The coefficients of $\theta_3^2(q)\nabla(q^2)$ get saved into $2^{12}=4096$ files: \code{/home/h4mod16.0}, \code{/home/h4mod16.1}, \ldots, \code{/home/h4mod16.4095}.
+
+\begin{lstlisting}
+./polymult multiply 1 4 68719476736 4096 2048 10189617 h4mod16. /home
+\end{lstlisting}
+
+\textbf{Example 3}. The following command tabulates all Hurwitz class numbers $H(\Delta)$ (multiplied by 3) of imaginary quadratic fields to $|\Delta| < 2^{40}$, where $|\Delta| \equiv 3$ (mod 8). In particular, it multiplies $\nabla(q)$ by $\nabla^2(q)$ to degree $2^{37}=137438953472$ out-of-core, with the bundling parameter $2^{12}=4096$ and the upper bound on the coefficients of $\nabla^3(q)$ given by $29180730$. The coefficients of $\nabla^3(q)$ get saved into $2^{12}=4096$ files: \code{/home/h3mod8.0}, \code{/home/h3mod8.1}, \ldots, \code{/home/h3mod8.4095}.
+
+\begin{lstlisting}
+./polymult multiply 2 3 137438953472 4096 4096 29180730 h3mod8. /home
+\end{lstlisting}
+
+%% TODO: EXAMPLE WITH DIVISION FOR |D|=7 (MOD 8)
+
+%% TODO: EXAMPLES WITH CONGRUENT NUMBERS
+
+\section{Utilizing the library} \label{sec:polymult_lib}
+
+In order to utilize the library, place the files \code{init.h} and \code{mult.h} into your include path, and copy the library \code{libpolymult.a} into your library path. By writing
+
+\begin{lstlisting}
+#include <mult.h>
+\end{lstlisting}
+
+among other inclusions in your file you will gain access to all the subroutines defined in \code{mult.h}. Same applies to \code{init.h}.
+
+When compiling, link the library to your program by writing \code{-lpolymult}. Don't forget to link all the other libraries that POLYMULT depends on (see Subsection \ref{sec:dependencies} for the complete list).
+
+
+
+\begin{thebibliography}{Koh05}
+
+%% Use the widest label as parameter.
+%% Reference items can be numbered or have labels of your choice, as below.
+
+%% In IMPAN journals, only the title is italicized; boldface is not used.
+%% Our software will add links to many articles; for this, enclosing volume numbers in { } is helpful
+%% Do not give the issue number unless the issues are paginated separately.
+
+%%%%%%%%%%% To ease editing, use normal size:
+
+\normalsize
+\baselineskip=17pt
+
+\bibitem[GG03]{gathen}
+J.\ von zur Gathen, J.\ Gerhard,
+\emph{Modern Computer Algebra},
+Cambridge University Press, 2nd edition, 2003.
+
+\bibitem[HTW10]{hart}
+W.~B. Hart, G. Tornar\'ia, M. Watkins,
+\emph{Congruent number theta coefficients to $10^{12}$},
+Algorithmic Number Theory --- ANTS-IX (Nancy, France), Lecture Notes in Computer Science 6197, Springer-Verlag, Berlin, pp. 186 -- 200,  2010.
+
+\bibitem[Mos14]{mosunov}
+A.~S. Mosunov,
+\emph{Unconditional Class Group Tabulation to $2^{40}$},
+Master's thesis, University of Calgary, Calgary, Alberta, 2014.
+
+\end{thebibliography}
+
+\end{document}
